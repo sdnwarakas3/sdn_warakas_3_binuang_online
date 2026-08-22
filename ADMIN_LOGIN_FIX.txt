@@ -1,0 +1,11 @@
+PERBAIKAN LOGIN ADMIN
+
+Username awal: admin
+Password awal: 123456
+
+Jika ingin mengganti password di Railway, buat Variables:
+ADMIN_USER
+ADMIN_PASS
+ADMIN_TOKEN (opsional; gunakan token acak panjang)
+
+Setelah mengubah Variables, Redeploy service.

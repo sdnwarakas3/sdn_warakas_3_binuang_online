@@ -11,6 +11,10 @@ const SCHOOL = 'SDN-WARAKAS-3';
 const ROOT = __dirname;
 const LEGACY_FILE = path.join(ROOT, 'server-data.json');
 const DATABASE_URL = process.env.DATABASE_URL;
+const ADMIN_USER = process.env.ADMIN_USER || 'admin';
+const ADMIN_PASS = process.env.ADMIN_PASS || '123456';
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || crypto.createHash('sha256').update(`${ADMIN_USER}:${ADMIN_PASS}`).digest('hex');
+function isAdmin(req){ return String(req.headers['x-admin-token'] || '') === ADMIN_TOKEN; }
 if (!DATABASE_URL) { console.error('DATABASE_URL belum diatur. Aplikasi tetap dijalankan agar Railway dapat melakukan healthcheck.'); }
 
 const pool = DATABASE_URL ? new Pool({
