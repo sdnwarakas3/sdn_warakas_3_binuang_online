@@ -299,7 +299,7 @@ function startWS(url){
   if(ws&&[WebSocket.OPEN,WebSocket.CONNECTING].includes(ws.readyState))return;
   try{
     ws=new WebSocket(url);
-    ws.onopen=()=>{online=true;net();ws.send(JSON.stringify({type:'join',school:SCHOOL_CODE,classes:classes,schoolSetting:school,dirty:false,changedAt:0,clientId:getClientId()}));};
+    ws.onopen=()=>{online=true;net();const hello={type:'join',school:SCHOOL_CODE,classes:classes,dirty:localStorage.getItem('syncDirty')==='1',changedAt:Number(lastLocalChange)||0,clientId:getClientId()};if(adminToken)hello.schoolSetting=school;ws.send(JSON.stringify(hello));};
     ws.onmessage=e=>{try{const m=JSON.parse(e.data);if(m.type==='sync'&&m.classes&&!localStorage.getItem('syncDirty'))applyServerState(m)}catch(err){console.error(err)}};
     ws.onerror=()=>{online=false;net()};
     ws.onclose=()=>{online=false;net();clearTimeout(retryTimer);if(localStorage.getItem('forceOffline')!=='1')retryTimer=setTimeout(()=>startWS(url),3000)};
@@ -312,9 +312,13 @@ function getClientId(){
 }
 async function syncSend(force=false){
   if(location.protocol==='file:'||localStorage.getItem('forceOffline')==='1')return false;
-  const payload={school:SCHOOL_CODE,schoolSetting:school,changedAt:lastLocalChange,clientId:getClientId()};
+  // Class/teacher data sync must never be blocked by an old schoolSetting
+  // cached on a teacher device. Protected identity settings are sent only by
+  // an authenticated Admin when explicitly forcing a full save.
+  const payload={school:SCHOOL_CODE,changedAt:lastLocalChange,clientId:getClientId()};
   if(force||!active){payload.mode='full';payload.classes=classes;}
   else {payload.mode='class';payload.classId=String(active);payload.classData=classes[String(active)]||{};}
+  if(force && adminToken) payload.schoolSetting=school;
   try{
     const r=await fetch('/api/state',{method:'POST',headers:adminHeaders(),body:JSON.stringify(payload),cache:'no-store'});
     if(!r.ok)throw Error('Server '+r.status);

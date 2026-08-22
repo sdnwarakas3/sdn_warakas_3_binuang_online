@@ -161,9 +161,16 @@ const server=http.createServer(async (req,res)=>{
         const payload=await readBody(req);
         if(payload.school!==SCHOOL) return json(res,400,{ok:false,error:'school tidak sesuai'});
         const current=await getState();
-        const incomingSetting=JSON.stringify(payload.schoolSetting||{});
-        const currentSetting=JSON.stringify(current.schoolSetting||{});
-        if(incomingSetting!==currentSetting && !isAdmin(req)) return json(res,403,{ok:false,error:'Perubahan identitas Kepala Sekolah, Wali Kelas, Guru Mapel, dan pengaturan sekolah hanya boleh oleh ADMIN'});
+        // Normal teacher/class sync does NOT send schoolSetting. Only an Admin
+        // may change protected identity/settings fields. This prevents a stale
+        // copy of schoolSetting on a teacher's phone from causing every normal
+        // data save to be rejected with HTTP 403.
+        if(Object.prototype.hasOwnProperty.call(payload,'schoolSetting')){
+          const incomingSetting=JSON.stringify(payload.schoolSetting||{});
+          const currentSetting=JSON.stringify(current.schoolSetting||{});
+          if(incomingSetting!==currentSetting && !isAdmin(req)) return json(res,403,{ok:false,error:'Perubahan identitas Kepala Sekolah, Wali Kelas, Guru Mapel, dan pengaturan sekolah hanya boleh oleh ADMIN'});
+          if(!isAdmin(req) && incomingSetting===currentSetting) delete payload.schoolSetting;
+        }
         const saved=await updateState(payload);
         const out={ok:true,...saved};
         broadcast({type:'sync',classes:saved.classes,schoolSetting:saved.schoolSetting,accepted:true,changedAt:saved.version},null);
@@ -195,7 +202,7 @@ wss.on('connection',(ws)=>{
         // First device initializes an empty cloud database from its existing
         // local data (the bundled student list is included in the app).
         if(db.version===0 && hasLocal){
-          const version=await saveState(m.classes,m.schoolSetting,localChanged||Date.now(),m.clientId);
+          const version=await saveState(m.classes,db.schoolSetting,localChanged||Date.now(),m.clientId);
           db=await getState();
           send(ws,{type:'sync',classes:db.classes,schoolSetting:db.schoolSetting,accepted:true,changedAt:version,seeded:true});
           broadcast({type:'sync',classes:db.classes,schoolSetting:db.schoolSetting,accepted:true,changedAt:version,seeded:true},ws);
@@ -222,7 +229,7 @@ wss.on('connection',(ws)=>{
           send(ws,{type:'sync',classes:db.classes,schoolSetting:db.schoolSetting,accepted:true,changedAt:db.version,conflict:true});
           return;
         }
-        const version=await saveState(m.classes,m.schoolSetting,incoming,m.clientId);
+        const version=await saveState(m.classes,db.schoolSetting,incoming,m.clientId);
         const fresh=await getState();
         const payload={type:'sync',classes:fresh.classes,schoolSetting:fresh.schoolSetting,accepted:true,changedAt:version};
         broadcast(payload,ws); send(ws,payload);
