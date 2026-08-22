@@ -160,6 +160,10 @@ const server=http.createServer(async (req,res)=>{
         return json(res,200,{ok:true,token:ADMIN_TOKEN});
       } catch(e){ return json(res,400,{ok:false,error:'Permintaan login tidak valid'}); }
     }
+    if(urlPath==='/api/admin/check' && req.method==='GET'){
+      if(!isAdmin(req)) return json(res,401,{ok:false,error:'Token Admin tidak valid'});
+      return json(res,200,{ok:true,role:'admin'});
+    }
     if(urlPath==='/api/state' && req.method==='POST'){
       try {
         const payload=await readBody(req);
