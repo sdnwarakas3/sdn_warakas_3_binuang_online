@@ -121,15 +121,28 @@ wss.on('connection',(ws)=>{
       if(m.school!==SCHOOL) return;
       ws.school=SCHOOL; ws.clientId=m.clientId||null;
       if(m.type==='join'){
-        const db=await getState();
+        let db=await getState();
         const localChanged=Number(m.changedAt)||0;
         const dirty=!!m.dirty;
+        const hasLocal=!!(m.classes && typeof m.classes==='object' && Object.keys(m.classes).length);
+
+        // First device initializes an empty cloud database from its existing
+        // local data (the bundled student list is included in the app).
+        if(db.version===0 && hasLocal){
+          const version=await saveState(m.classes,m.schoolSetting,localChanged||Date.now(),m.clientId);
+          db=await getState();
+          send(ws,{type:'sync',classes:db.classes,schoolSetting:db.schoolSetting,accepted:true,changedAt:version,seeded:true});
+          broadcast({type:'sync',classes:db.classes,schoolSetting:db.schoolSetting,accepted:true,changedAt:version,seeded:true},ws);
+          return;
+        }
+
         // If this browser has unsynced local changes that are newer than the
         // server version, publish them first. Otherwise the server wins.
-        if(dirty && m.classes && typeof m.classes==='object' && localChanged>db.version){
+        if(dirty && hasLocal && localChanged>db.version){
           const version=await saveState(m.classes,m.schoolSetting,localChanged,m.clientId);
           const fresh=await getState();
           send(ws,{type:'sync',classes:fresh.classes,schoolSetting:fresh.schoolSetting,accepted:true,changedAt:version});
+          broadcast({type:'sync',classes:fresh.classes,schoolSetting:fresh.schoolSetting,accepted:true,changedAt:version},ws);
         } else {
           send(ws,{type:'sync',classes:db.classes,schoolSetting:db.schoolSetting,accepted:true,changedAt:db.version,conflict:dirty && localChanged<db.version});
         }
@@ -139,7 +152,7 @@ wss.on('connection',(ws)=>{
         const db=await getState();
         const incoming=Number(m.changedAt)||0;
         // Prevent an older offline browser from overwriting newer server data.
-        if(incoming && db.version && incoming < db.version && !m.force){
+        if(incoming && db.version && incoming < db.version){
           send(ws,{type:'sync',classes:db.classes,schoolSetting:db.schoolSetting,accepted:true,changedAt:db.version,conflict:true});
           return;
         }

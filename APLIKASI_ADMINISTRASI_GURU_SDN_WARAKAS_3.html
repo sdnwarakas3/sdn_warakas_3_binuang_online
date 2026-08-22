@@ -256,7 +256,10 @@ function startWS(url){
     ws.onopen=()=>{
       online=true;net();
       ws.send(JSON.stringify({type:'join',school:SCHOOL_CODE,classes:classes,schoolSetting:school,dirty:localStorage.getItem('syncDirty')==='1',changedAt:lastLocalChange,clientId:getClientId()}));
-      setTimeout(()=>syncSend(true),250);
+      // Only resend a local change after joining when this browser really has
+      // unsynced data. Never overwrite the shared database with a stale local
+      // copy merely because the WebSocket connected.
+      if(localStorage.getItem('syncDirty')==='1') setTimeout(()=>syncSend(false),250);
     };
     ws.onmessage=e=>{
       try{
@@ -302,7 +305,6 @@ function syncSend(force){
       schoolSetting:school,
       changedAt:lastLocalChange,
       clientId:getClientId(),
-      force:!!force
     }));
     // Keep syncDirty until the server confirms the update. This prevents
     // unsent data from being lost when the connection drops immediately
