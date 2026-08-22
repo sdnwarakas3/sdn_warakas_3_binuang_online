@@ -280,10 +280,12 @@ async function pollServer(){
     if(!dirty){
       applyServerState(m);
     }else if(active){
-      // Keep the local class while dirty; other classes are refreshed from server
-      // so editing one class cannot overwrite changes made elsewhere.
-      const merged={...m.classes,[String(active)]:classes[String(active)]};
-      classes=merged; localStorage.setItem('classData',JSON.stringify(classes));
+      // Keep the class currently being edited locally. Refresh other classes
+      // silently; NEVER rebuild the visible page during background polling.
+      const merged={...(m.classes||{}),[String(active)]:classes[String(active)]};
+      classes=merged;
+      localStorage.setItem('classData',JSON.stringify(classes));
+      updateStatusEverywhere();
     }else{
       // Full-school dirty operations (Excel import/restore) are pushed explicitly.
       await syncSend(true);
@@ -292,20 +294,22 @@ async function pollServer(){
   }catch(e){online=false;updateStatusEverywhere()}
 }
 function applyServerState(m){
-  classes=m.classes||{}; school=m.schoolSetting||school;
-  localStorage.setItem('classData',JSON.stringify(classes));
-  localStorage.setItem('schoolSetting',JSON.stringify(school));
-  localStorage.removeItem('syncDirty'); lastLocalChange=0; localStorage.removeItem('lastLocalChange');
-  if(active){
-    initClass(active);
-    // Do not rebuild an open data-entry form while the user is typing.
-    // Re-rendering every 2 seconds was the reason Admin/input fields kept resetting.
-    if(!document.querySelector('input:focus,select:focus,textarea:focus')) dashboard();
-  } else if(!document.getElementById('adminPanelRoot')) {
-    // Never rebuild the Admin panel from background polling/WebSocket updates.
-    // The previous version refreshed this form every 2 seconds, making it impossible to type.
-    if(document.querySelector('h2')) adminPanel();
+  // IMPORTANT: synchronization must NEVER navigate or rebuild the current page.
+  // Rebuilding app.innerHTML here used to make every click/form entry jump back
+  // to Dashboard. The server state is updated silently; the user can navigate
+  // normally and the next page render will use the newest state.
+  if(m && m.classes && typeof m.classes==='object'){
+    classes=m.classes;
+    localStorage.setItem('classData',JSON.stringify(classes));
   }
+  if(m && m.schoolSetting && typeof m.schoolSetting==='object'){
+    school=m.schoolSetting;
+    localStorage.setItem('schoolSetting',JSON.stringify(school));
+  }
+  localStorage.removeItem('syncDirty');
+  lastLocalChange=0;
+  localStorage.removeItem('lastLocalChange');
+  updateStatusEverywhere();
 }
 function startWS(url){
   if(!url||location.protocol==='file:')return;
@@ -336,7 +340,24 @@ async function syncSend(force=false){
     const r=await fetch('/api/state',{method:'POST',headers:adminHeaders(),body:JSON.stringify(payload),cache:'no-store'});
     if(!r.ok)throw Error('Server '+r.status);
     const m=await r.json();if(!m.ok)throw Error(m.error||'Gagal sinkron');
-    applyServerState(m);online=true;updateStatusEverywhere();return true;
+    // Do not call any navigation/render function here. For a class save, merge
+    // the acknowledged class into local state; for an Admin full save, accept
+    // the complete server snapshot.
+    if(m.classes && typeof m.classes==='object'){
+      if(payload.mode==='class' && active){
+        classes={...(m.classes||{}),[String(active)]:classes[String(active)]};
+      }else{
+        classes=m.classes;
+      }
+      localStorage.setItem('classData',JSON.stringify(classes));
+    }
+    if(payload.mode==='full' && m.schoolSetting && adminToken){
+      school=m.schoolSetting;
+      localStorage.setItem('schoolSetting',JSON.stringify(school));
+    }
+    localStorage.removeItem('syncDirty');
+    lastLocalChange=0; localStorage.removeItem('lastLocalChange');
+    online=true;updateStatusEverywhere();return true;
   }catch(e){online=false;updateStatusEverywhere();return false}
 }
 window.addEventListener('online',()=>{online=false;net();autoConnect(true);setTimeout(()=>{if(localStorage.getItem('syncDirty')==='1')syncSend(!active)},500)});
