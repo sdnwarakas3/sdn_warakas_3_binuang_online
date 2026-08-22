@@ -88,6 +88,43 @@ async function saveState(classes, schoolSetting, incomingChangedAt, clientId){
 function send(ws,obj){ if(ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify(obj)); }
 function broadcast(obj, except){ wss.clients.forEach(c=>{ if(c.school===SCHOOL && c!==except) send(c,obj); }); }
 
+
+function readBody(req){
+  return new Promise((resolve,reject)=>{
+    let body='';
+    req.on('data',chunk=>{ body+=chunk; if(body.length>25*1024*1024){ reject(new Error('Payload terlalu besar')); req.destroy(); } });
+    req.on('end',()=>{ try{ resolve(body?JSON.parse(body):{}); }catch(e){ reject(new Error('JSON tidak valid')); } });
+    req.on('error',reject);
+  });
+}
+function json(res,status,obj){
+  res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Access-Control-Allow-Origin':'*'});
+  res.end(JSON.stringify(obj));
+}
+async function updateState(payload){
+  if(!pool) throw new Error('DATABASE_URL belum diatur');
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const cur=await client.query('SELECT classes, school_setting, version FROM school_state WHERE school_code=$1 FOR UPDATE',[SCHOOL]);
+    const row=cur.rows[0] || {classes:{},school_setting:{nama:'SD NEGERI WARAKAS 3',tahun:'2026/2027'},version:0};
+    let classes=row.classes||{};
+    let schoolSetting=payload.schoolSetting || row.school_setting || {};
+    if(payload.mode==='class' && payload.classId){
+      classes={...classes, [String(payload.classId)]: payload.classData || {}};
+    } else if(payload.classes && typeof payload.classes==='object') {
+      classes=payload.classes;
+    } else {
+      throw new Error('Data kelas tidak ditemukan');
+    }
+    const version=Math.max(Date.now(), Number(row.version)||0 + 1);
+    await client.query(`UPDATE school_state SET classes=$1::jsonb, school_setting=$2::jsonb, version=$3, updated_at=NOW() WHERE school_code=$4`,[JSON.stringify(classes),JSON.stringify(schoolSetting),version,SCHOOL]);
+    await client.query(`INSERT INTO sync_log(school_code,client_id,version,changed_at) VALUES($1,$2,$3,$4)`,[SCHOOL,payload.clientId||null,version,Number(payload.changedAt)||version]);
+    await client.query('COMMIT');
+    return {classes,schoolSetting,version};
+  }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+}
+
 const server=http.createServer(async (req,res)=>{
   try{
     const urlPath=req.url.split('?')[0];
@@ -105,6 +142,35 @@ const server=http.createServer(async (req,res)=>{
       try { await pool.query('SELECT 1'); res.writeHead(200,{'Content-Type':'application/json'}); return res.end(JSON.stringify({ok:true,database:'postgresql'})); }
       catch(e){ res.writeHead(503,{'Content-Type':'application/json'}); return res.end(JSON.stringify({ok:false,database:'postgresql',error:e.message})); }
     }
+    if(req.method==='OPTIONS' && urlPath.startsWith('/api/')){
+      res.writeHead(204,{'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type'}); return res.end();
+    }
+    if(urlPath==='/api/state' && req.method==='GET'){
+      try { const state=await getState(); return json(res,200,{ok:true,...state}); }
+      catch(e){ return json(res,503,{ok:false,error:e.message}); }
+    }
+    if(urlPath==='/api/admin/login' && req.method==='POST'){
+      try {
+        const payload=await readBody(req);
+        if(payload.username!==ADMIN_USER || payload.password!==ADMIN_PASS) return json(res,401,{ok:false,error:'Username atau sandi Admin salah'});
+        return json(res,200,{ok:true,token:ADMIN_TOKEN});
+      } catch(e){ return json(res,400,{ok:false,error:'Permintaan login tidak valid'}); }
+    }
+    if(urlPath==='/api/state' && req.method==='POST'){
+      try {
+        const payload=await readBody(req);
+        if(payload.school!==SCHOOL) return json(res,400,{ok:false,error:'school tidak sesuai'});
+        const current=await getState();
+        const incomingSetting=JSON.stringify(payload.schoolSetting||{});
+        const currentSetting=JSON.stringify(current.schoolSetting||{});
+        if(incomingSetting!==currentSetting && !isAdmin(req)) return json(res,403,{ok:false,error:'Perubahan identitas Kepala Sekolah, Wali Kelas, Guru Mapel, dan pengaturan sekolah hanya boleh oleh ADMIN'});
+        const saved=await updateState(payload);
+        const out={ok:true,...saved};
+        broadcast({type:'sync',classes:saved.classes,schoolSetting:saved.schoolSetting,accepted:true,changedAt:saved.version},null);
+        return json(res,200,out);
+      } catch(e){ return json(res,500,{ok:false,error:e.message}); }
+    }
+
     let p=urlPath; if(p==='/') p='/APLIKASI_ADMINISTRASI_GURU_SDN_WARAKAS_3.html';
     const file=path.normalize(path.join(ROOT,p));
     if(!file.startsWith(ROOT)){res.writeHead(403);return res.end('Forbidden');}
