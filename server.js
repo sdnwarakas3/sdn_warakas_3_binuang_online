@@ -11,17 +11,18 @@ const SCHOOL = 'SDN-WARAKAS-3';
 const ROOT = __dirname;
 const LEGACY_FILE = path.join(ROOT, 'server-data.json');
 const DATABASE_URL = process.env.DATABASE_URL;
-if (!DATABASE_URL) { console.error('DATABASE_URL belum diatur.'); process.exit(1); }
+if (!DATABASE_URL) { console.error('DATABASE_URL belum diatur. Aplikasi tetap dijalankan agar Railway dapat melakukan healthcheck.'); }
 
-const pool = new Pool({
+const pool = DATABASE_URL ? new Pool({
   connectionString: DATABASE_URL,
   ssl: process.env.DATABASE_SSL === 'false' ? false : { rejectUnauthorized: false },
   max: Number(process.env.DB_POOL_MAX || 10),
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000
-});
+}) : null;
 
 async function dbInit(){
+  if(!pool) throw new Error('DATABASE_URL belum diatur');
   await pool.query(`CREATE TABLE IF NOT EXISTS school_state (
     school_code TEXT PRIMARY KEY,
     classes JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -63,12 +64,14 @@ async function migrateLegacy(){
 }
 
 async function getState(){
+  if(!pool) throw new Error('DATABASE_URL belum diatur');
   const r=await pool.query('SELECT classes, school_setting, version, updated_at FROM school_state WHERE school_code=$1',[SCHOOL]);
   if(!r.rows.length){ await pool.query('INSERT INTO school_state(school_code) VALUES($1) ON CONFLICT DO NOTHING',[SCHOOL]); return {classes:{},schoolSetting:{nama:'SD NEGERI WARAKAS 3',tahun:'2026/2027'},version:0}; }
   const x=r.rows[0]; return {classes:x.classes||{},schoolSetting:x.school_setting||{},version:Number(x.version)||0,updatedAt:x.updated_at};
 }
 
 async function saveState(classes, schoolSetting, incomingChangedAt, clientId){
+  if(!pool) throw new Error('DATABASE_URL belum diatur');
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
@@ -89,9 +92,18 @@ const server=http.createServer(async (req,res)=>{
   try{
     const urlPath=req.url.split('?')[0];
     if(urlPath==='/health'){
-      const state=await getState();
+      let dbStatus='not_configured', version=null;
+      if(pool){
+        try { const state=await getState(); dbStatus='connected'; version=state.version; }
+        catch(e){ dbStatus='unavailable'; }
+      }
       res.writeHead(200,{'Content-Type':'application/json'});
-      return res.end(JSON.stringify({ok:true,school:SCHOOL,database:'postgresql',version:state.version,time:new Date().toISOString()}));
+      return res.end(JSON.stringify({ok:true,school:SCHOOL,database:'postgresql',databaseStatus:dbStatus,version,time:new Date().toISOString()}));
+    }
+    if(urlPath==='/health/db'){
+      if(!pool){ res.writeHead(503,{'Content-Type':'application/json'}); return res.end(JSON.stringify({ok:false,error:'DATABASE_URL belum diatur'})); }
+      try { await pool.query('SELECT 1'); res.writeHead(200,{'Content-Type':'application/json'}); return res.end(JSON.stringify({ok:true,database:'postgresql'})); }
+      catch(e){ res.writeHead(503,{'Content-Type':'application/json'}); return res.end(JSON.stringify({ok:false,database:'postgresql',error:e.message})); }
     }
     let p=urlPath; if(p==='/') p='/APLIKASI_ADMINISTRASI_GURU_SDN_WARAKAS_3.html';
     const file=path.normalize(path.join(ROOT,p));
@@ -140,5 +152,15 @@ wss.on('connection',(ws)=>{
   });
 });
 
-process.on('SIGTERM',async()=>{await pool.end();process.exit(0);});
-(async()=>{await dbInit(); server.listen(PORT,()=>console.log(`SDN WARAKAS 3 online PostgreSQL: port ${PORT}`));})().catch(e=>{console.error(e);process.exit(1);});
+process.on('SIGTERM',async()=>{if(pool) await pool.end();process.exit(0);});
+server.listen(PORT,()=>console.log(`SDN WARAKAS 3 online PostgreSQL: port ${PORT}`));
+
+async function initWithRetry(){
+  if(!pool) return;
+  for(let attempt=1; attempt<=20; attempt++){
+    try { await dbInit(); console.log('PostgreSQL siap.'); return; }
+    catch(e){ console.error(`PostgreSQL belum siap (percobaan ${attempt}/20):`, e.message); await new Promise(r=>setTimeout(r,5000)); }
+  }
+  console.error('PostgreSQL belum berhasil terhubung setelah beberapa percobaan. Server tetap hidup; periksa DATABASE_URL.');
+}
+initWithRetry();
