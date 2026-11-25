@@ -1,0 +1,1 @@
+try{if(sessionStorage.getItem('perpus_splash_seen')==='1')document.documentElement.classList.add('skip-startup-splash')}catch(e){}

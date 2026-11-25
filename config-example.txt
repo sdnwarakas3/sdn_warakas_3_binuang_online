@@ -1,0 +1,4 @@
+PENGATURAN SINKRONISASI
+
+1. Salin file ini menjadi konfigurasi di server sesuai petunjuk README_ONLINE_OFFLINE.txt.
+2. Jangan menaruh password/token database di index.html jika tidak diperlukan.

@@ -1,0 +1,1 @@
+FIX V50: Sinkronisasi foto anggota dan buku memakai SHA-256. Server menjadi sumber utama untuk perangkat lama; foto baru/ganti di perangkat di-upload dan didistribusikan ke perangkat lain. Edit buku + upload/kamera foto ikut pipeline yang sama. Pastikan api.php versi ini ikut di-upload ke server pusat Kesug.

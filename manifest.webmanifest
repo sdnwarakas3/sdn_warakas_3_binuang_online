@@ -1,0 +1,27 @@
+{
+  "name": "Perpustakaan Lentera Hati SD Negeri Warakas 3",
+  "short_name": "Lentera Hati",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#062b61",
+  "theme_color": "#087DE8",
+  "lang": "id-ID",
+  "scope": "./",
+  "description": "PERPUSTAKAAN LENTERA HATI SD NEGERI WARAKAS 3 KECAMATAN BINUANG KABUPATEN SERANG-BANTEN 42196",
+  "id": "./",
+  "icons": [
+    {
+      "src": "icon-192.png?v=20260908r29",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png?v=20260908r29",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "prefer_related_applications": false
+}
